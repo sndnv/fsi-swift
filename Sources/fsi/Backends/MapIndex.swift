@@ -25,7 +25,7 @@ import Foundation
 /// ```
 ///
 /// - SeeAlso: ``TrieIndex``
-public struct MapIndex<Value>: Index {
+public struct MapIndex<Value: Sendable>: Index {
     private var underlying: [String: Value]
 
     /// Creates an empty `MapIndex`.
