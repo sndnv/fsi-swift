@@ -2,9 +2,11 @@ import Foundation
 
 /// An object for storing and retrieving arbitrary values related to file-system paths.
 ///
+/// Conformers are `Sendable`, so an index can be passed across actor boundaries provided its `Value` is also `Sendable`.
+///
 /// - SeeAlso: ``MapIndex``, ``TrieIndex``
-public protocol Index<Value> {
-    associatedtype Value
+public protocol Index<Value>: Sendable {
+    associatedtype Value: Sendable
 
     /// Returns the number of values in this index.
     var size: Int { get }

@@ -18,6 +18,15 @@ struct MapIndexTests {
         #expect(copy.get("/a/b/d") == 2)
     }
 
+    @Test("is Sendable when Value is Sendable")
+    func sendableConformance() async {
+        var index = MapIndex<Int>()
+        index.put("/a/b/c", 42)
+
+        let task = Task { index.get("/a/b/c") }
+        #expect(await task.value == 42)
+    }
+
     @Test("initializes from an existing dictionary")
     func initFromDictionary() {
         let entries = ["/a/b/c": 1, "/a/b/d": 2]

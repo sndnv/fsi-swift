@@ -29,7 +29,7 @@ import Foundation
 /// ```
 ///
 /// - SeeAlso: ``MapIndex``
-public struct TrieIndex<Value>: Index {
+public struct TrieIndex<Value: Sendable>: @unchecked Sendable, Index {
     private var root: IndexNode<Value>
     private var actualSize: Int
 
