@@ -1,0 +1,24 @@
+name: fsi-swift Build
+
+permissions:
+  contents: read
+
+on: [ push, pull_request ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Run QA
+        run: ./qa.py
