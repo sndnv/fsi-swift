@@ -1,0 +1,21 @@
+### Swift / SPM ###
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+.netrc
+.idea/
+
+### Xcode ###
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
