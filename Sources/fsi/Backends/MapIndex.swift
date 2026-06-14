@@ -24,20 +24,60 @@ import Foundation
 /// let decoded = try JSONDecoder().decode(MapIndex<Int>.self, from: data)
 /// ```
 ///
+/// - Note: Keys are stored unchanged - unlike ``TrieIndex``, a `MapIndex` has no separator and does not
+///         normalize paths, so `a/b/c` and `/a/b/c` are distinct keys. A ``SchemeMapper`` only canonicalizes
+///         the scheme component; it does not normalize the rest of the path.
+///
 /// - SeeAlso: ``TrieIndex``
 public struct MapIndex<Value: Sendable>: Index {
     private var underlying: [String: Value]
+    private let schemeMapper: SchemeMapper?
 
-    /// Creates an empty `MapIndex`.
+    /// Creates an empty `MapIndex` that preserves path schemes.
     public init() {
-        self.underlying = [:]
+        self.init([:], carrying: nil)
     }
 
-    /// Creates a `MapIndex` populated with the provided `entries`.
+    /// Creates an empty `MapIndex` using the provided `schemeMapper` (see ``Schemes``).
+    ///
+    /// - Parameter schemeMapper: function for canonicalizing path schemes.
+    public init(schemeMapper: @escaping SchemeMapper) {
+        self.init([:], carrying: schemeMapper)
+    }
+
+    /// Creates a `MapIndex` populated with the provided `entries`, preserving path schemes.
     ///
     /// - Parameter entries: initial path/value pairs.
     public init(_ entries: [String: Value]) {
+        self.init(entries, carrying: nil)
+    }
+
+    /// Creates a `MapIndex` populated with the provided `entries` and using the provided `schemeMapper`
+    /// (see ``Schemes``).
+    ///
+    /// - Note: The provided `entries` are stored as-is; the `schemeMapper` is applied to keys of subsequent
+    ///         operations only.
+    ///
+    /// - Parameters:
+    ///   - entries: initial path/value pairs.
+    ///   - schemeMapper: function for canonicalizing path schemes.
+    public init(_ entries: [String: Value], schemeMapper: @escaping SchemeMapper) {
+        self.init(entries, carrying: schemeMapper)
+    }
+
+    private init(_ entries: [String: Value], carrying schemeMapper: SchemeMapper?) {
         self.underlying = entries
+        self.schemeMapper = schemeMapper
+    }
+
+    private func normalize(_ path: String) -> String {
+        guard let schemeMapper else { return path }
+        let (rawScheme, rest) = Schemes.split(path)
+        let scheme = schemeMapper(rawScheme)
+        if let scheme, !scheme.isEmpty {
+            return "\(scheme)\(Schemes.Delimiter)\(rest)"
+        }
+        return rest
     }
 
     public var size: Int { underlying.count }
@@ -45,45 +85,48 @@ public struct MapIndex<Value: Sendable>: Index {
     public var keys: Set<String> { Set(underlying.keys) }
 
     public func get(_ path: String) -> Value? {
-        underlying[path]
+        underlying[normalize(path)]
     }
 
     public func contains(_ path: String) -> Bool {
-        underlying[path] != nil
+        underlying[normalize(path)] != nil
     }
 
     public subscript(path: String) -> Value? {
-        underlying[path]
+        underlying[normalize(path)]
     }
 
     public mutating func put(_ path: String, _ value: Value) {
-        underlying[path] = value
+        underlying[normalize(path)] = value
     }
 
     public mutating func put(_ path: String, _ value: Value, _ f: (String, Value?, Value) -> Value) {
-        underlying[path] = f(path, underlying[path], value)
+        let key = normalize(path)
+        underlying[key] = f(path, underlying[key], value)
     }
 
     public mutating func putAll(_ entries: [String: Value]) {
         for (path, value) in entries {
-            underlying[path] = value
+            underlying[normalize(path)] = value
         }
     }
 
     public mutating func putAll<S>(_ entries: [String: S], _ f: (String, Value?, S) -> Value) {
         for (path, value) in entries {
-            underlying[path] = f(path, underlying[path], value)
+            let key = normalize(path)
+            underlying[key] = f(path, underlying[key], value)
         }
     }
 
     public mutating func putAll(_ paths: [String], _ f: (String, Value?) -> Value) {
         for path in paths {
-            underlying[path] = f(path, underlying[path])
+            let key = normalize(path)
+            underlying[key] = f(path, underlying[key])
         }
     }
 
     public mutating func remove(_ path: String) {
-        underlying.removeValue(forKey: path)
+        underlying.removeValue(forKey: normalize(path))
     }
 
     public mutating func clear() {
@@ -105,7 +148,7 @@ public struct MapIndex<Value: Sendable>: Index {
         for (path, value) in underlying where f(path, value) {
             result[path] = value
         }
-        return MapIndex<Value>(result)
+        return MapIndex<Value>(result, carrying: schemeMapper)
     }
 
     public func search(_ expr: NSRegularExpression) -> [String: Value] {
@@ -136,7 +179,7 @@ public struct MapIndex<Value: Sendable>: Index {
         for (path, value) in underlying {
             result[path] = f(path, value)
         }
-        return MapIndex<S>(result)
+        return MapIndex<S>(result, carrying: schemeMapper)
     }
 
     /// Returns a new index containing only non-nil results of applying the provided function `f` to each
@@ -158,7 +201,7 @@ public struct MapIndex<Value: Sendable>: Index {
                 result[path] = mapped
             }
         }
-        return MapIndex<S>(result)
+        return MapIndex<S>(result, carrying: schemeMapper)
     }
 
     public mutating func replaceAll(_ f: (String, Value) -> Value) {
@@ -189,6 +232,7 @@ extension MapIndex: Codable where Value: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         self.underlying = try container.decode([String: Value].self)
+        self.schemeMapper = nil
     }
 
     public func encode(to encoder: Encoder) throws {
