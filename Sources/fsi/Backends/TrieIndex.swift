@@ -28,23 +28,50 @@ import Foundation
 /// let decoded = try JSONDecoder().decode(TrieIndex<Int>.self, from: data)
 /// ```
 ///
+/// - Note: Paths are treated as absolute and normalized - redundant and trailing separators are collapsed
+///         and a leading separator is always present, so `a/b/c`, `/a//b/c` and `/a/b/c/` all refer to `/a/b/c`.
+///
 /// - SeeAlso: ``MapIndex``
 public struct TrieIndex<Value: Sendable>: @unchecked Sendable, Index {
     private var root: IndexNode<Value>
     private var actualSize: Int
+    private let schemeMapper: SchemeMapper?
 
-    /// Creates an empty `TrieIndex`.
+    /// Creates an empty `TrieIndex` that preserves path schemes.
     public init() {
-        self.root = IndexNode<Value>()
-        self.actualSize = 0
+        self.init(carrying: nil)
     }
 
-    /// Creates a `TrieIndex` populated with the provided `entries`.
+    /// Creates an empty `TrieIndex` using the provided `schemeMapper` (see ``Schemes``).
+    ///
+    /// - Parameter schemeMapper: function for canonicalizing path schemes.
+    public init(schemeMapper: @escaping SchemeMapper) {
+        self.init(carrying: schemeMapper)
+    }
+
+    /// Creates a `TrieIndex` populated with the provided `entries`, preserving path schemes.
     ///
     /// - Parameter entries: initial path/value pairs.
     public init(_ entries: [String: Value]) {
-        self.init()
+        self.init(carrying: nil)
         self.putAll(entries)
+    }
+
+    /// Creates a `TrieIndex` populated with the provided `entries` and using the provided `schemeMapper`
+    /// (see ``Schemes``).
+    ///
+    /// - Parameters:
+    ///   - entries: initial path/value pairs.
+    ///   - schemeMapper: function for canonicalizing path schemes.
+    public init(_ entries: [String: Value], schemeMapper: @escaping SchemeMapper) {
+        self.init(carrying: schemeMapper)
+        self.putAll(entries)
+    }
+
+    private init(carrying schemeMapper: SchemeMapper?) {
+        self.root = IndexNode<Value>()
+        self.actualSize = 0
+        self.schemeMapper = schemeMapper
     }
 
     public var size: Int { actualSize }
@@ -180,7 +207,7 @@ public struct TrieIndex<Value: Sendable>: @unchecked Sendable, Index {
     ///
     /// - Parameter f: mapping function.
     public func compactMapValues<S>(_ f: (String, Value) -> S?) -> TrieIndex<S> {
-        var result = TrieIndex<S>()
+        var result = TrieIndex<S>(carrying: schemeMapper)
         forEach { path, value in
             if let mapped = f(path, value) {
                 result.put(path, mapped)
@@ -234,11 +261,21 @@ extension TrieIndex {
     }
 
     private func parts(_ path: String) -> [String] {
-        path.components(separatedBy: Path.separator).filter { !$0.isEmpty }
+        let (rawScheme, rest) = Schemes.split(path)
+        let scheme: String
+        if let schemeMapper {
+            scheme = schemeMapper(rawScheme) ?? ""
+        } else {
+            scheme = rawScheme ?? ""
+        }
+        let segments = rest.components(separatedBy: Path.separator).filter { !$0.isEmpty }
+        return [scheme] + segments
     }
 
     private func rebuild(_ parts: [String]) -> String {
-        parts.joined(separator: Path.separator)
+        guard let scheme = parts.first else { return Path.separator }
+        let body = Path.separator + parts.dropFirst().joined(separator: Path.separator)
+        return scheme.isEmpty ? body : "\(scheme)\(Schemes.Delimiter)\(body)"
     }
 
     private func getNode(_ path: [String]) -> IndexNode<Value>? {
@@ -295,7 +332,7 @@ extension TrieIndex {
     }
 
     private func forEachNode(_ f: ([String], IndexNode<Value>) -> Void) {
-        var remaining: [([String], IndexNode<Value>)] = [([""], root)]
+        var remaining: [([String], IndexNode<Value>)] = [([], root)]
         var index = 0
         while index < remaining.count {
             let (currentPath, currentNode) = remaining[index]
@@ -312,7 +349,7 @@ extension TrieIndex: Codable where Value: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let entries = try container.decode([String: Value].self)
-        self.init()
+        self.init(carrying: nil)
         self.putAll(entries)
     }
 

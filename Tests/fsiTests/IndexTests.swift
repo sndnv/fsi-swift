@@ -390,6 +390,133 @@ private func runCrossBackendSameElements<Idx: Index, Other: Index>(
     #expect(index.sameElements(other))
 }
 
+private func runSchemes<Idx: Index>(
+    _ makeIndex: () -> Idx,
+    aliased makeAliased: () -> Idx
+) where Idx.Value == Int {
+    var preserve = makeIndex()
+    preserve.put("/a/b/c", 1)
+    preserve.put("fs:/a/b/c", 2)
+    preserve.put("photos:/a/b/c", 3)
+
+    #expect(preserve.size == 3)
+    #expect(preserve.get("/a/b/c") == 1)
+    #expect(preserve.get("fs:/a/b/c") == 2)
+    #expect(preserve.get("photos:/a/b/c") == 3)
+    #expect(preserve.get("file:/a/b/c") == nil)
+    #expect(preserve.keys == ["/a/b/c", "fs:/a/b/c", "photos:/a/b/c"])
+
+    var isolate = makeIndex()
+    isolate.put("photos:/a/b", 1)
+    isolate.put("music:/a/b", 2)
+    isolate.put("/a/b", 3)
+
+    #expect(isolate.size == 3)
+
+    isolate.put("photos:/a/b", 10) { _, existing, current in (existing ?? 0) + current }
+    #expect(isolate.get("photos:/a/b") == 11)
+    #expect(isolate.get("music:/a/b") == 2)
+    #expect(isolate.get("/a/b") == 3)
+
+    isolate.remove("photos:/a/b")
+    #expect(isolate.size == 2)
+    #expect(isolate.get("photos:/a/b") == nil)
+    #expect(isolate.get("music:/a/b") == 2)
+    #expect(isolate.get("/a/b") == 3)
+
+    var roots = makeIndex()
+    roots.put("photos:/", 1)
+    roots.put("/", 2)
+
+    #expect(roots.size == 2)
+    #expect(roots.get("photos:/") == 1)
+    #expect(roots.get("/") == 2)
+    #expect(roots.keys == ["photos:/", "/"])
+
+    var colons = makeIndex()
+    colons.put("/a/b:c/d", 1)
+    colons.put("photos:/a/b:c", 2)
+
+    #expect(colons.size == 2)
+    #expect(colons.get("/a/b:c/d") == 1)
+    #expect(colons.get("photos:/a/b:c") == 2)
+    #expect(colons.keys == ["/a/b:c/d", "photos:/a/b:c"])
+
+    var prefixes = makeIndex()
+    prefixes.put("ab:/x", 1)
+    #expect(prefixes.get("ab:/x") == 1)
+    #expect(prefixes.keys == ["ab:/x"])
+
+    prefixes.put("c:/x", 2)
+    prefixes.put("12:/x", 3)
+    #expect(prefixes.size == 3)
+    #expect(prefixes.get("c:/x") == 2)
+    #expect(prefixes.get("12:/x") == 3)
+    #expect(prefixes.contains("c:/x"))
+
+    var deep = makeIndex()
+    deep.put("photos:/a/b/c/d/e", 1)
+    deep.put("photos:/a/b", 2)
+
+    #expect(deep.size == 2)
+    #expect(deep.get("photos:/a/b/c/d/e") == 1)
+    #expect(deep.get("photos:/a/b") == 2)
+    #expect(deep.contains("photos:/a/b/c/d/e"))
+    #expect(!deep.contains("photos:/a/b/c"))
+
+    var aliased = makeAliased()
+    aliased.put("fs:/a/b/c", 1)
+    #expect(aliased.size == 1)
+    #expect(aliased.get("/a/b/c") == 1)
+    #expect(aliased.get("file:/a/b/c") == 1)
+    #expect(aliased.get("FS:/a/b/c") == 1)
+
+    aliased.put("file:/a/b/c", 5) { _, existing, current in (existing ?? 0) + current }
+    #expect(aliased.get("/a/b/c") == 6)
+    #expect(aliased.size == 1)
+
+    aliased.put("photos:/a/b/c", 2)
+    #expect(aliased.size == 2)
+    #expect(aliased.get("photos:/a/b/c") == 2)
+    #expect(aliased.keys == ["/a/b/c", "photos:/a/b/c"])
+
+    let paths = [
+        "/", "/a", "/a/b/c", "/a/b/c/d/e/f/g/h/i/j",
+        "C:\\Users\\foo", "C:/Users/foo", "C:foo", "\\\\server\\share\\file", "\\\\?\\C:\\very\\long",
+        "photos:", "photos:/", "photos:/a", "photos:/a/b/c", "music:/x/y", "x-y.z+1:/a/b",
+        "fs:C:\\Users\\foo", "file:\\a\\b\\c", "photos:C:/x/y", "fs:\\\\server\\share\\file",
+        "", "//", "////", "///a///b///", "photos://///", "photos://a//b", "C://\\/\\", ":/a", "://x", "/a/b/",
+        "/a b/c d", "/а/电/é", "/📁/x", "/a-b_c.d/e@f/g&h", "/a%20b/c(1)", "photos:/a b/π"
+    ]
+
+    for path in paths {
+        var index = makeIndex()
+
+        index.put(path, 1)
+        #expect(index.get(path) == 1, "path=[\(path)]")
+        #expect(index.contains(path), "path=[\(path)]")
+        #expect(index.size == 1, "path=[\(path)]")
+
+        index.remove(path)
+        #expect(index.get(path) == nil, "path=[\(path)]")
+        #expect(!index.contains(path), "path=[\(path)]")
+        #expect(index.size == 0, "path=[\(path)]")
+    }
+}
+
+private func runSchemeRoundTrip<Idx: Codable & Index>(_ makeIndex: () -> Idx) throws where Idx.Value == Int {
+    var original = makeIndex()
+    original.putAll(["photos:/a/b/c": 1, "music:/a/b/c": 2, "/a/b/c": 3])
+
+    let data = try JSONEncoder().encode(original)
+    let decoded = try JSONDecoder().decode(Idx.self, from: data)
+
+    #expect(decoded.get("photos:/a/b/c") == 1)
+    #expect(decoded.get("music:/a/b/c") == 2)
+    #expect(decoded.get("/a/b/c") == 3)
+    #expect(decoded.toMap() == original.toMap())
+}
+
 @Suite("MapIndex")
 struct MapIndexIndexSpec {
     @Test func basicOps() { runBasicOps { MapIndex<Int>() } }
@@ -409,6 +536,10 @@ struct MapIndexIndexSpec {
     @Test func crossBackendSameElements() {
         runCrossBackendSameElements({ MapIndex<Int>() }, { TrieIndex<Int>() })
     }
+    @Test func schemes() {
+        runSchemes({ MapIndex<Int>() }, aliased: { MapIndex<Int>(schemeMapper: Schemes.aliases("fs", "file")) })
+    }
+    @Test func schemeRoundTrip() throws { try runSchemeRoundTrip { MapIndex<Int>() } }
 
     @Test func transformation() {
         var index = MapIndex<Int>()
@@ -475,6 +606,10 @@ struct TrieIndexIndexSpec {
     @Test func crossBackendSameElements() {
         runCrossBackendSameElements({ TrieIndex<Int>() }, { MapIndex<Int>() })
     }
+    @Test func schemes() {
+        runSchemes({ TrieIndex<Int>() }, aliased: { TrieIndex<Int>(schemeMapper: Schemes.aliases("fs", "file")) })
+    }
+    @Test func schemeRoundTrip() throws { try runSchemeRoundTrip { TrieIndex<Int>() } }
 
     @Test func transformation() {
         var index = TrieIndex<Int>()

@@ -94,6 +94,66 @@ with each entry having a copy of `/a/b/c`, whereas in the `trie` index, it will 
 
 with the parts of `/a/b/c` being stored only once.
 
+## Path Schemes
+
+Paths may be _scheme-qualified_, allowing a single index to hold both local file-system paths and logical
+entities from non-file-system libraries:
+
+```swift
+var index = MapIndex<Int>() // or TrieIndex<Int>()
+
+index.put("/a/b/c", 1)        // a local path
+index.put("photos:/a/b/c", 2) // a logical "photos" entity
+index.put("music:/a/b/c", 3)  // a logical "music" entity
+
+index.get("/a/b/c")        // 1
+index.get("photos:/a/b/c") // 2 - distinct from the local path
+```
+
+A scheme is the part before the first `:`; it must start with a letter and be at least two characters long.
+This means single-character prefixes (`c:/x`), numeric prefixes (`12:30`) and absolute local paths (`/a/b`)
+are **not** treated as schemes. Scheme detection does not depend on the path separator, so both index
+implementations recognize schemes identically.
+
+### Scheme mapping
+
+By default, schemes are preserved - what you put is exactly what you get back. To canonicalize
+schemes, provide a [`SchemeMapper`](./Sources/fsi/Schemes.swift) - a `(String?) -> String?`
+function applied to the parsed scheme (with `nil` meaning "no scheme") - at construction:
+
+```swift
+// treat `fs` and `file` as the local/schemeless file system
+var index = TrieIndex<Int>(schemeMapper: Schemes.aliases("fs", "file"))
+
+index.put("fs:/a/b/c", 1)
+index.get("/a/b/c")        // 1 - `fs:` was stripped
+index.get("file:/a/b/c")   // 1 - `file:` maps to the same path
+index.get("photos:/a/b/c") // nil - other schemes are still distinct
+```
+
+The mapper is configured per-index and applies consistently across both backends. A few mappers are provided
+out of the box: `Schemes.Identity` (the default), `Schemes.aliases(...)`, `Schemes.Lowercase` and
+`Schemes.Uppercase`.
+
+> A `MapIndex` or `TrieIndex` decoded via `Codable` uses the identity mapper (schemes preserved). To restore a
+> custom mapper after decoding, re-insert the entries into an index constructed with that mapper.
+
+## Path normalization
+
+Paths are treated as **absolute**. `TrieIndex` normalizes each path - redundant and trailing separators are
+collapsed and a leading separator is always present - so, for example, `a/b/c`, `/a//b/c` and `/a/b/c/` all
+refer to the same entry (`/a/b/c`):
+
+```swift
+var trie = TrieIndex<Int>()
+trie.put("a/b/c", 1)
+trie.keys // ["/a/b/c"]
+```
+
+`MapIndex` stores keys directly (it has no separator), so it does not perform this normalization - there,
+`a/b/c` and `/a/b/c` are distinct keys. A scheme mapper only canonicalizes the scheme component, not the rest
+of the path. If you need identical behavior across both backends, pass already normalized, absolute paths.
+
 ## Usage
 
 Below are a few examples of how to use the `Index` API; for all available functionality, check
