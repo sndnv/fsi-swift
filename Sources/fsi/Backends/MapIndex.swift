@@ -72,7 +72,7 @@ public struct MapIndex<Value: Sendable>: Index {
 
     private func normalize(_ path: String) -> String {
         guard let schemeMapper else { return path }
-        let (rawScheme, rest) = Schemes.split(path)
+        let (rawScheme, rest) = Schemes.extract(path)
         let scheme = schemeMapper(rawScheme)
         if let scheme, !scheme.isEmpty {
             return "\(scheme)\(Schemes.Delimiter)\(rest)"

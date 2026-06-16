@@ -51,9 +51,9 @@ public enum Schemes {
     // swiftlint:disable:next force_try
     private static let pattern = try! NSRegularExpression(pattern: "^([A-Za-z][A-Za-z0-9+.-]+)\(Delimiter)")
 
-    /// Splits the provided `path` into its raw scheme (or `nil` if it has none) and the remainder of the
+    /// Splits the provided `path` into its scheme (or `nil` if it has none) and the remainder of the
     /// path (everything after the scheme's ``Delimiter``, or the whole `path` when there is no scheme).
-    static func split(_ path: String) -> (scheme: String?, rest: String) {
+    public static func extract(_ path: String) -> (scheme: String?, rest: String) {
         let range = NSRange(path.startIndex..<path.endIndex, in: path)
         guard let match = pattern.firstMatch(in: path, options: [], range: range),
               let schemeRange = Range(match.range(at: 1), in: path),

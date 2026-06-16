@@ -261,7 +261,7 @@ extension TrieIndex {
     }
 
     private func parts(_ path: String) -> [String] {
-        let (rawScheme, rest) = Schemes.split(path)
+        let (rawScheme, rest) = Schemes.extract(path)
         let scheme: String
         if let schemeMapper {
             scheme = schemeMapper(rawScheme) ?? ""
