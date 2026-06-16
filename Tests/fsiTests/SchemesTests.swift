@@ -65,7 +65,7 @@ struct SchemesTests {
     }
 
     @Test("splits paths into their scheme and remainder")
-    func split() {
+    func extract() {
         // swiftlint:disable:next large_tuple
         let cases: [(String, String?, String)] = [
             ("/a/b/c", nil, "/a/b/c"),
@@ -92,7 +92,7 @@ struct SchemesTests {
         ]
 
         for (input, expectedScheme, expectedRest) in cases {
-            let (scheme, rest) = Schemes.split(input)
+            let (scheme, rest) = Schemes.extract(input)
             #expect(scheme == expectedScheme, "input=[\(input)]")
             #expect(rest == expectedRest, "input=[\(input)]")
         }
