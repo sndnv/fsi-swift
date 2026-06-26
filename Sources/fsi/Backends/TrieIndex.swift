@@ -28,8 +28,13 @@ import Foundation
 /// let decoded = try JSONDecoder().decode(TrieIndex<Int>.self, from: data)
 /// ```
 ///
-/// - Note: Paths are treated as absolute and normalized - redundant and trailing separators are collapsed
-///         and a leading separator is always present, so `a/b/c`, `/a//b/c` and `/a/b/c/` all refer to `/a/b/c`.
+/// - Note: Paths are normalized so that redundant interior and trailing separators are collapsed
+///         (`/a//b/c/` and `/a/b/c` both refer to `/a/b/c`), while the leading separators that root a path
+///         are preserved, so each distinct rooting is a distinct key: a relative path stays relative
+///         (`a/b/c` is *not* the same key as `/a/b/c`), a single leading separator denotes an absolute path
+///         (`/a/b/c`), exactly two leading separators denote a UNC path (`//server/share`; three or more
+///         collapse to one) and a drive root is preserved as-is (`C:/source`). Scheme-qualified paths are
+///         always treated as absolute, so `photos://a/b` and `photos:/a/b` refer to the same key.
 ///
 /// - SeeAlso: ``MapIndex``
 public struct TrieIndex<Value: Sendable>: @unchecked Sendable, Index {
@@ -260,6 +265,22 @@ extension TrieIndex {
         }
     }
 
+    /// Splits `path` into its parts.
+    ///
+    /// The first element is always the (mapped) scheme of the path - empty for a schemeless/local path - so
+    /// that the scheme becomes the top-most level of the tree. The remaining elements are the path segments
+    /// (with empty segments removed, collapsing redundant separators; whitespace-only segments are kept)
+    /// prefixed, where applicable, by a root marker that records how the path is rooted, so that
+    /// differently-rooted paths become distinct keys:
+    ///  - an absolute path keeps no marker, so `/a/b/c` becomes `["", "a", "b", "c"]`;
+    ///  - a relative path is marked with a leading empty segment, so `a/b/c` becomes `["", "", "a", "b", "c"]`;
+    ///  - a UNC path is marked with the separator itself, so `//server/share` becomes `["", "/", "server", "share"]`;
+    ///  - a drive root needs no marker (the drive segment is itself the root), so `C:/a/b` becomes `["", "C:", "a", "b"]`.
+    ///
+    /// Scheme-qualified paths are always treated as absolute (no relative/UNC marker), so `photos:/a/b//c`
+    /// becomes `["photos", "a", "b", "c"]`.
+    ///
+    /// - SeeAlso: ``rebuild(_:)``
     private func parts(_ path: String) -> [String] {
         let (rawScheme, rest) = Schemes.extract(path)
         let scheme: String
@@ -269,13 +290,77 @@ extension TrieIndex {
             scheme = rawScheme ?? ""
         }
         let segments = rest.components(separatedBy: Path.separator).filter { !$0.isEmpty }
-        return [scheme] + segments
+
+        let body: [String]
+        if !scheme.isEmpty {
+            body = segments
+        } else {
+            switch leadingSeparators(rest) {
+            case 0:
+                body = isVolumeRoot(segments.first) ? segments : [""] + segments
+            case 2:
+                body = [Path.separator] + segments
+            default:
+                body = segments
+            }
+        }
+
+        return [scheme] + body
     }
 
+    /// Rebuilds the list of path `parts` (as produced by ``parts(_:)``) into a full path. The first element
+    /// is the scheme, the remainder the (optionally marker-prefixed) body. The root marker determines how
+    /// the path is rooted:
+    ///  - a leading empty segment marks a relative path - no leading separator is added;
+    ///  - a leading separator segment marks a UNC path - two leading separators are added;
+    ///  - a leading drive segment is itself the root - no leading separator is added;
+    ///  - otherwise the path is absolute - a single leading separator is added.
+    ///
+    /// - SeeAlso: ``parts(_:)``
     private func rebuild(_ parts: [String]) -> String {
         guard let scheme = parts.first else { return Path.separator }
-        let body = Path.separator + parts.dropFirst().joined(separator: Path.separator)
-        return scheme.isEmpty ? body : "\(scheme)\(Schemes.Delimiter)\(body)"
+        let body = parts.dropFirst()
+        let first = body.first
+
+        let prefix: String
+        let segments: ArraySlice<String>
+        if first == "" {
+            prefix = ""
+            segments = body.dropFirst()
+        } else if first == Path.separator {
+            prefix = Path.separator + Path.separator
+            segments = body.dropFirst()
+        } else if isVolumeRoot(first) {
+            prefix = ""
+            segments = body
+        } else {
+            prefix = Path.separator
+            segments = body
+        }
+
+        let rest = prefix + segments.joined(separator: Path.separator)
+        return scheme.isEmpty ? rest : "\(scheme)\(Schemes.Delimiter)\(rest)"
+    }
+
+    /// Counts the number of leading separator occurrences in `path`, used to determine how a path is rooted
+    /// (relative, absolute or UNC).
+    private func leadingSeparators(_ path: String) -> Int {
+        var rest = Substring(path)
+        var count = 0
+        while rest.hasPrefix(Path.separator) {
+            rest = rest.dropFirst(Path.separator.count)
+            count += 1
+        }
+        return count
+    }
+
+    /// Checks whether `segment` is a volume/drive root, such as `C:` in `C:/source`. Such a segment is
+    /// itself the root of the path, so neither ``parts(_:)`` nor ``rebuild(_:)`` adds a separator in front
+    /// of it.
+    private func isVolumeRoot(_ segment: String?) -> Bool {
+        guard let segment, segment.count == 2 else { return false }
+        let chars = Array(segment)
+        return chars[1] == ":" && chars[0].isASCII && chars[0].isLetter
     }
 
     private func getNode(_ path: [String]) -> IndexNode<Value>? {
